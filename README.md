@@ -1,6 +1,6 @@
 # VFS Sandbox
 
-A Go command launcher with filesystem isolation on Linux, macOS, and Windows. The available isolation model depends on the operating system: Linux uses a full path OverlayFS view, macOS applies a write policy around a private workspace clone, and Windows runs the command in a disposable Windows Sandbox virtual machine.
+A Go command launcher with filesystem isolation on Linux, macOS, and Windows. The available isolation model depends on the operating system: Linux uses a full path OverlayFS view, macOS applies a write policy around a private workspace clone, and Windows tries Windows Sandbox first, then Sandboxie-Plus. Minifilter dependencies are unavailable, so that backend is reserved but not implemented.
 
 ## Build and use
 
@@ -51,7 +51,7 @@ On macOS and Windows, `--keep-layer` retains an automatically created directory 
 | --- | --- | --- | --- |
 | Linux | Full visible mount tree is reconstructed with OverlayFS, plus explicit policies for kernel and shared filesystems | Host Linux installation under a private mount namespace | Per-mount upper-layer changes and whiteouts |
 | macOS | Seatbelt denies filesystem writes outside the private workspace, home, and temporary directories; APFS clone-on-write is used for workspace files when supported | Host macOS installation | Workspace changes and writes under the private home and temporary directories |
-| Windows | Windows Sandbox provides a disposable guest filesystem; the host working directory is mapped read-only and copied into the guest | A clean Windows Sandbox VM | Exported workspace changes, command output, and exit status |
+| Windows | Windows Sandbox first, Sandboxie-Plus fallback; Minifilter reserved, not implemented | A disposable Windows Sandbox VM or a temporary Sandboxie-Plus box | Exported workspace changes, command output, and exit status |
 
 ### Linux mount policies
 
@@ -80,9 +80,11 @@ The macOS backend does not redirect writes to arbitrary host paths into a full-s
 
 ### Windows behavior
 
-The Windows backend generates a Windows Sandbox configuration and starts a disposable guest. It disables guest networking, clipboard redirection, and virtual GPU access. The host working directory is mapped read-only, copied into a writable guest workspace, and exported to the retained layer after the command exits. An absolute command path inside the host working directory is redirected to its guest copy. Standard output, standard error, and the command exit status are returned to the host. Standard input is closed in the guest, so commands must be noninteractive. The guest shuts down after the command completes.
+Windows tries a disposable Windows Sandbox VM first. It disables guest networking, clipboard redirection, and virtual GPU access. The host working directory is mapped read-only, copied into a writable guest workspace, and exported to the retained layer after the command exits. An absolute command path inside the host working directory is redirected to its guest copy. Standard input is closed in the guest, so commands must be noninteractive. The VM shuts down after the command completes.
 
-Windows Sandbox is an optional Windows feature and requires a supported Windows edition and Hyper-V. The command runs in the clean guest OS, so its executable and dependencies must be present in that guest or in the copied working directory. Guest filesystem changes outside that workspace are discarded when the VM closes and are not included in `diff`.
+If Windows Sandbox is unavailable or its launcher cannot be started, the command falls back to a uniquely named, temporary Sandboxie-Plus box. The fallback uses the host installation, runs the command under Sandboxie, and copies the sandboxed view of the working directory and command output into the layer before clearing the box. It requires `Start.exe`, `SbieIni.exe`, and a working Sandboxie-Plus driver/service. It is not a VM: it follows the installed Sandboxie configuration, and network access or configured direct-write exceptions may remain enabled. The launcher does not retry through Sandboxie after Windows Sandbox has started, to avoid running a command twice. If neither backend is available, it returns an error. Minifilter dependencies are unavailable, so its backend is reserved but not implemented.
+
+Windows Sandbox is an optional Windows feature and requires a supported Windows edition and Hyper-V. In that backend, the command runs in the clean guest OS, so its executable and dependencies must be present in that guest or in the copied working directory. Guest filesystem changes outside that workspace are discarded when the VM closes and are not included in `diff`.
 
 ## Scope and limitations
 
@@ -90,4 +92,4 @@ On Linux, mount namespace setup requires `CAP_SYS_ADMIN`, creating the private `
 
 The Linux backend is filesystem copy-on-write, not a complete security sandbox. It does not create user, PID, network, or IPC namespaces, drop capabilities, or close inherited file descriptors. A process with mount capabilities, an inherited host file descriptor, or another kernel interface can access host resources outside this filesystem view. The fresh `/proc` mount still shows the host PID namespace.
 
-The macOS and Windows backends use different operating-system isolation mechanisms and do not provide identical behavior to Linux. macOS permits reads across the host filesystem and shares the host network. Windows runs inside a VM, but only the working directory is exported for review. Do not use this launcher as the sole security boundary for untrusted programs.
+The macOS and Windows backends use different operating-system isolation mechanisms and do not provide identical behavior to Linux. macOS permits reads across the host filesystem and shares the host network. Windows may use a VM or the weaker Sandboxie-Plus process sandbox; only the working directory is exported for review. Do not use this launcher as the sole security boundary for untrusted programs.

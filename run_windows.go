@@ -62,11 +62,7 @@ func run(args []string) int {
 	if done {
 		return code
 	}
-	launcher, err := findWindowsSandbox()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "vfs-sandbox: Windows Sandbox is unavailable; enable the Windows Sandbox feature on a supported Windows edition with Hyper-V")
-		return 125
-	}
+	launcher, launcherErr := findWindowsSandbox()
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: get working directory: %v\n", err)
@@ -93,6 +89,10 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: %v\n", err)
 		return 2
 	}
+	if portablePathWithin(workingDirectory, layerDir) {
+		fmt.Fprintf(os.Stderr, "vfs-sandbox: layer directory %q must not contain the working directory %q\n", layerDir, workingDirectory)
+		return 2
+	}
 	if invocation.SaveArtifacts {
 		if err := validatePortableArtifactDirectory(layerDir, invocation.ArtifactDir, workingDirectory); err != nil {
 			fmt.Fprintf(os.Stderr, "vfs-sandbox: artifact directory: %v\n", err)
@@ -112,6 +112,10 @@ func run(args []string) int {
 	}
 	if portablePathWithin(runDir, workingDirectory) {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: temporary launcher directory %q is inside the working directory; choose a working directory outside the system temporary directory\n", runDir)
+		return 2
+	}
+	if portablePathWithin(runDir, layerDir) || portablePathWithin(layerDir, runDir) {
+		fmt.Fprintf(os.Stderr, "vfs-sandbox: temporary launcher directory %q and layer directory %q must not overlap\n", runDir, layerDir)
 		return 2
 	}
 	inputDir := filepath.Join(runDir, "input")
@@ -137,6 +141,10 @@ func run(args []string) int {
 	if err := writePortableManifest(layerDir, manifest); err != nil {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: %v\n", err)
 		return 125
+	}
+	if launcherErr != nil {
+		fmt.Fprintf(os.Stderr, "vfs-sandbox: Windows Sandbox is unavailable (%v); trying Sandboxie-Plus\n", launcherErr)
+		return runWindowsSandboxieFallback(invocation, workingDirectory, runDir, layerDir, manifest, &removeLayer)
 	}
 	request, err := json.Marshal(windowsSandboxRequest{
 		Command: windowsGuestCommandPath(invocation.Command, workingDirectory),
@@ -179,7 +187,11 @@ func run(args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, "vfs-sandbox: starting a disposable Windows Sandbox virtual machine")
 	command := exec.Command(launcher, configPath)
-	if err := command.Run(); err != nil {
+	if err := command.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "vfs-sandbox: could not start Windows Sandbox (%v); trying Sandboxie-Plus\n", err)
+		return runWindowsSandboxieFallback(invocation, workingDirectory, runDir, layerDir, manifest, &removeLayer)
+	}
+	if err := command.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: Windows Sandbox did not finish normally: %v\n", err)
 	}
 	if invocation.SaveArtifacts {
@@ -322,11 +334,9 @@ func printUsage(w io.Writer) {
   vfs-sandbox [--layer-dir DIR | --keep-layer] [--save-artifacts [--artifact-dir DIR]] -- COMMAND [ARG...]
   vfs-sandbox diff LAYER_DIR
 
-Run COMMAND in a disposable Windows Sandbox virtual machine. The host working
-directory is mapped read-only and copied into the guest; its changes, output,
-and exit status are exported to the layer directory. Networking and clipboard
-sharing are disabled. Absolute command paths inside the host working directory
-are redirected to the guest copy. Standard input is closed in the guest.
+Run COMMAND using Windows Sandbox, falling back to Sandboxie-Plus when Windows
+Sandbox cannot be started. Sandboxie-Plus must be installed and available.
+Minifilter dependencies are unavailable; that backend is reserved and not implemented.
 
 Options:
   --layer-dir DIR  create a retained layer at this new directory
