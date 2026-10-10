@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!entrypoint.cmd
+!build-container.ps1
+!ewdk/
+!ewdk/**

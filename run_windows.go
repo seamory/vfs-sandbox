@@ -62,6 +62,11 @@ func run(args []string) int {
 	if done {
 		return code
 	}
+	backend := os.Getenv("VFS_SANDBOX_WINDOWS_BACKEND")
+	if backend != "" && backend != "auto" && backend != "minifilter" {
+		fmt.Fprintln(os.Stderr, "vfs-sandbox: VFS_SANDBOX_WINDOWS_BACKEND must be auto or minifilter")
+		return 2
+	}
 	launcher, launcherErr := findWindowsSandbox()
 	workingDirectory, err := os.Getwd()
 	if err != nil {
@@ -141,6 +146,9 @@ func run(args []string) int {
 	if err := writePortableManifest(layerDir, manifest); err != nil {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: %v\n", err)
 		return 125
+	}
+	if backend == "minifilter" {
+		return runWindowsMinifilter(invocation, workingDirectory, layerDir, manifest, &removeLayer)
 	}
 	if launcherErr != nil {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox: Windows Sandbox is unavailable (%v); trying Sandboxie-Plus\n", launcherErr)
@@ -336,7 +344,7 @@ func printUsage(w io.Writer) {
 
 Run COMMAND using Windows Sandbox, falling back to Sandboxie-Plus when Windows
 Sandbox cannot be started. Sandboxie-Plus must be installed and available.
-Minifilter dependencies are unavailable; that backend is reserved and not implemented.
+If Sandboxie-Plus is unavailable, try the installed VfsSandbox Minifilter driver.
 
 Options:
   --layer-dir DIR  create a retained layer at this new directory

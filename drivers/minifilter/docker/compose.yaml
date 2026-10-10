@@ -1,0 +1,25 @@
+services:
+  builder:
+    image: ${MINIFILTER_IMAGE:-vfs-sandbox-minifilter:ewdk}
+    build:
+      context: .
+      args:
+        WINDOWS_BASE: ${WINDOWS_BASE:-mcr.microsoft.com/windows/servercore:ltsc2022}
+    # Match the Windows host/container version, or select hyperv isolation on a
+    # host with Hyper-V support. This image is always a Windows amd64 container.
+    isolation: ${WINDOWS_ISOLATION:-process}
+    command:
+      - -Altitude
+      - ${ALTITUDE:?Set ALTITUDE to your filter altitude}
+      - -Architecture
+      - ${ARCHITECTURE:-all}
+      - -Configuration
+      - ${CONFIGURATION:-Release}
+    volumes:
+      - type: bind
+        source: ..
+        target: 'C:\src'
+        read_only: true
+      - type: bind
+        source: ../../../dist/minifilter
+        target: 'C:\out'

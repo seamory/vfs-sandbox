@@ -1,6 +1,6 @@
 # VFS Sandbox
 
-A Go command launcher with filesystem isolation on Linux, macOS, and Windows. The available isolation model depends on the operating system: Linux uses a full path OverlayFS view, macOS applies a write policy around a private workspace clone, and Windows tries Windows Sandbox first, then Sandboxie-Plus. Minifilter dependencies are unavailable, so that backend is reserved but not implemented.
+A Go command launcher with filesystem isolation on Linux, macOS, and Windows. The available isolation model depends on the operating system: Linux uses a full path OverlayFS view, macOS applies a write policy around a private workspace clone, and Windows tries Windows Sandbox first, then Sandboxie-Plus, then an installed VfsSandbox Minifilter driver. The Minifilter backend is experimental and requires Windows driver validation before deployment.
 
 ## Build and use
 
@@ -9,6 +9,21 @@ The launcher uses the Go standard library. Build it with the Go toolchain for th
 ```sh
 go build -o vfs-sandbox .
 ```
+
+With GNU Make and a POSIX shell (Git Bash on Windows):
+
+```sh
+make help
+make build           # current platform, output in dist/
+make cross           # Linux/macOS amd64+arm64, Windows amd64+386
+make windows-386     # one target only
+```
+
+The Makefile also provides `minifilter` for an initialized Windows WDK shell and
+`minifilter-image` / `minifilter-docker` for a Windows Docker engine. See the
+[Minifilter Docker build guide](drivers/minifilter/docker/README.md) for EWDK
+preparation, x64/x86 builds and package output locations. Driver Docker builds
+require Windows containers; local macOS/Linux Docker engines cannot run them.
 
 Linux:
 
@@ -39,11 +54,11 @@ vfs-sandbox.exe diff C:\path\to\vfs-sandbox-layer
 
 Linux removes its writable layer after the command exits unless `--keep-layer` or `--layer-dir DIR` is used. Its layer must be on a writable tmpfs below `/dev/shm`, `/run`, `/tmp`, or `/var/tmp`, so it can be hidden from the sandbox root. A retained Linux layer is inspectable only while that tmpfs remains mounted.
 
-Artifact saving is off by default. Add `--save-artifacts` to save newly created or changed regular files after the command exits, including when the command returns a nonzero status. Use `--artifact-dir DIR` with that switch to choose a new output directory whose parent already exists. Without `--artifact-dir`, the launcher creates `vfs-sandbox-artifacts-YYYYMMDD-HHMMSS-RANDOM` under the host's current working directory. On Linux, exported files keep their paths relative to the sandbox root. On macOS and Windows, workspace files are saved under `workspace/`; macOS private-directory files are saved under `sandbox/`.
+Artifact saving is off by default. Add `--save-artifacts` to save newly created or changed regular files after the command exits, including when the command returns a nonzero status. Use `--artifact-dir DIR` with that switch to choose a new output directory whose parent already exists. Without `--artifact-dir`, the launcher creates `vfs-sandbox-artifacts-YYYYMMDD-HHMMSS-RANDOM` under the host's current working directory. On Linux, exported files keep their paths relative to the sandbox root. On macOS and the Windows Sandbox/Sandboxie-Plus backends, workspace files are saved under `workspace/`; macOS private-directory files are saved under `sandbox/`. Minifilter artifacts cover changed files across supported volumes under `drives/<drive>/`.
 
 On macOS and Windows, `--keep-layer` retains an automatically created directory under the system temporary directory. `--layer-dir DIR` creates a retained layer at a new directory whose parent already exists. On macOS, the layer contains the copied workspace, private home and temporary directories, and a manifest. On Windows, it contains the exported workspace, command output, exit status, and a manifest.
 
-`diff LAYER_DIR` reports Linux OverlayFS upper-layer changes. On macOS and Windows it compares the exported workspace with the source workspace snapshot; macOS also lists changes under the private home and temporary directories. Windows discards the rest of the guest VM when it closes, so changes elsewhere in the guest filesystem are not exported by `diff` or saved as artifacts. Linux also supports `export LAYER_DIR [DEST_DIR]` to copy changed regular files from a retained layer; without `DEST_DIR`, it creates an artifact directory in the current working directory.
+`diff LAYER_DIR` reports Linux OverlayFS upper-layer changes. On macOS and the Windows Sandbox/Sandboxie-Plus backends it compares the exported workspace with the source workspace snapshot; macOS also lists changes under the private home and temporary directories. Minifilter uses its per-session change report to list changes across supported NTFS volumes. Windows Sandbox discards the rest of the guest VM when it closes, so changes elsewhere in the guest filesystem are not exported by `diff` or saved as artifacts. Linux also supports `export LAYER_DIR [DEST_DIR]` to copy changed regular files from a retained layer; without `DEST_DIR`, it creates an artifact directory in the current working directory.
 
 ## Platform behavior
 
@@ -51,7 +66,7 @@ On macOS and Windows, `--keep-layer` retains an automatically created directory 
 | --- | --- | --- | --- |
 | Linux | Full visible mount tree is reconstructed with OverlayFS, plus explicit policies for kernel and shared filesystems | Host Linux installation under a private mount namespace | Per-mount upper-layer changes and whiteouts |
 | macOS | Seatbelt denies filesystem writes outside the private workspace, home, and temporary directories; APFS clone-on-write is used for workspace files when supported | Host macOS installation | Workspace changes and writes under the private home and temporary directories |
-| Windows | Windows Sandbox first, Sandboxie-Plus fallback; Minifilter reserved, not implemented | A disposable Windows Sandbox VM or a temporary Sandboxie-Plus box | Exported workspace changes, command output, and exit status |
+| Windows | Windows Sandbox → Sandboxie-Plus → installed VfsSandbox Minifilter (experimental) | A Windows Sandbox VM, Sandboxie-Plus box, or host process tracked by Minifilter | Workspace changes for the first two backends; all observed supported-volume changes for Minifilter |
 
 ### Linux mount policies
 
@@ -82,9 +97,15 @@ The macOS backend does not redirect writes to arbitrary host paths into a full-s
 
 Windows tries a disposable Windows Sandbox VM first. It disables guest networking, clipboard redirection, and virtual GPU access. The host working directory is mapped read-only, copied into a writable guest workspace, and exported to the retained layer after the command exits. An absolute command path inside the host working directory is redirected to its guest copy. Standard input is closed in the guest, so commands must be noninteractive. The VM shuts down after the command completes.
 
-If Windows Sandbox is unavailable or its launcher cannot be started, the command falls back to a uniquely named, temporary Sandboxie-Plus box. The fallback uses the host installation, runs the command under Sandboxie, and copies the sandboxed view of the working directory and command output into the layer before clearing the box. It requires `Start.exe`, `SbieIni.exe`, and a working Sandboxie-Plus driver/service. It is not a VM: it follows the installed Sandboxie configuration, and network access or configured direct-write exceptions may remain enabled. The launcher does not retry through Sandboxie after Windows Sandbox has started, to avoid running a command twice. If neither backend is available, it returns an error. Minifilter dependencies are unavailable, so its backend is reserved but not implemented.
+If Windows Sandbox is unavailable or its launcher cannot be started, the command falls back to a uniquely named, temporary Sandboxie-Plus box. The fallback uses the host installation, runs the command under Sandboxie, and copies the sandboxed view of the working directory and command output into the layer before clearing the box. It requires `Start.exe`, `SbieIni.exe`, and a working Sandboxie-Plus driver/service. It is not a VM: it follows the installed Sandboxie configuration, and network access or configured direct-write exceptions may remain enabled. The launcher does not retry through Sandboxie after Windows Sandbox has started, to avoid running a command twice. If Sandboxie-Plus cannot be found, or its configuration/activation fails before command launch and cleanup succeeds, the launcher tries the Minifilter backend. Once a user command may have started, it is not retried. If no backend is available, the launcher returns exit code 125.
 
 Windows Sandbox is an optional Windows feature and requires a supported Windows edition and Hyper-V. In that backend, the command runs in the clean guest OS, so its executable and dependencies must be present in that guest or in the copied working directory. Guest filesystem changes outside that workspace are discarded when the VM closes and are not included in `diff`.
+
+The Minifilter backend implements read-through and copy-up across fixed, drive-letter NTFS volumes, including paths outside the working directory. It requires a built, signed and loaded `VfsSandbox` driver and an elevated launcher. It uses a suspended start, process-tree tracking and a kill-on-close Job Object. Unsupported requests reaching the filter fail instead of writing to the host. Its native driver has not yet been built or run in the macOS development environment. See [driver build instructions, compatibility limits and Windows smoke checks](drivers/minifilter/README.md).
+
+Set `VFS_SANDBOX_WINDOWS_BACKEND=minifilter` to select the driver directly for Windows validation; unset it or set it to `auto` for the normal fallback order. Minifilter does not virtualize the registry, network, untracked services or devices outside the filesystem filter stack.
+
+Minifilter build targets include Windows x64 (`GOARCH=amd64`) and 32-bit Windows 10 (`GOARCH=386`), both requiring Windows 10 2004 or later; Windows 11 uses the x64 build. Select `-Architecture x64` or `-Architecture x86` in the driver build script. The x86 driver requires the 22621 SDK/WDK. Install the driver matching the Windows kernel: 32-bit applications running on Windows x64 still use the x64 driver. Both native driver builds and WOW64 operation remain pending Windows validation.
 
 ## Scope and limitations
 
@@ -92,4 +113,4 @@ On Linux, mount namespace setup requires `CAP_SYS_ADMIN`, creating the private `
 
 The Linux backend is filesystem copy-on-write, not a complete security sandbox. It does not create user, PID, network, or IPC namespaces, drop capabilities, or close inherited file descriptors. A process with mount capabilities, an inherited host file descriptor, or another kernel interface can access host resources outside this filesystem view. The fresh `/proc` mount still shows the host PID namespace.
 
-The macOS and Windows backends use different operating-system isolation mechanisms and do not provide identical behavior to Linux. macOS permits reads across the host filesystem and shares the host network. Windows may use a VM or the weaker Sandboxie-Plus process sandbox; only the working directory is exported for review. Do not use this launcher as the sole security boundary for untrusted programs.
+The macOS and Windows backends use different operating-system isolation mechanisms and do not provide identical behavior to Linux. macOS permits reads across the host filesystem and shares the host network. Windows may use a VM, Sandboxie-Plus, or the experimental Minifilter backend; their isolation and export scopes differ. Do not use this launcher as the sole security boundary for untrusted programs.

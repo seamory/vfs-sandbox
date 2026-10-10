@@ -305,6 +305,9 @@ func runPortableDiff(args []string) int {
 		fmt.Fprintf(os.Stderr, "vfs-sandbox diff: unsupported manifest version or workspace path\n")
 		return 2
 	}
+	if manifest.Platform == "windows-minifilter" {
+		return diffMinifilter(layerDir)
+	}
 	changes := 0
 	workspaceRoot, err := safePortableTreePath(layerDir, manifest.Workspace)
 	workspaceCurrent := map[string]string{}

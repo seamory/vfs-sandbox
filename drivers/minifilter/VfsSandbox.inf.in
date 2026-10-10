@@ -1,0 +1,49 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class="Virtualization"
+ClassGuid={f75a86c0-10d8-4c3a-b233-ed60e4cdfaac}
+Provider=%Provider%
+DriverVer=10/11/2026,0.1.0.0
+CatalogFile=VfsSandbox.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DriverFiles=13
+
+[DefaultInstall.@ARCH@]
+CopyFiles=DriverFiles
+
+[DefaultInstall.@ARCH@.Services]
+AddService=VfsSandbox,,Service
+
+[DriverFiles]
+VfsSandbox.sys
+
+[Service]
+DisplayName=%Description%
+Description=%Description%
+ServiceBinary=%13%\VfsSandbox.sys
+ServiceType=2
+StartType=3
+ErrorControl=1
+LoadOrderGroup="FSFilter Virtualization"
+Dependencies=FltMgr
+AddReg=Instances
+
+[Instances]
+; Windows 11 24H2 uses Parameters\Instances. Earlier supported versions use Instances.
+HKR,"Instances","DefaultInstance",0x00000000,"VfsSandbox Instance"
+HKR,"Instances\VfsSandbox Instance","Altitude",0x00000000,"@ALTITUDE@"
+HKR,"Instances\VfsSandbox Instance","Flags",0x00010001,0
+HKR,"Parameters\Instances","DefaultInstance",0x00000000,"VfsSandbox Instance"
+HKR,"Parameters\Instances\VfsSandbox Instance","Altitude",0x00000000,"@ALTITUDE@"
+HKR,"Parameters\Instances\VfsSandbox Instance","Flags",0x00010001,0
+
+[SourceDisksNames]
+1=%Description%,,,
+[SourceDisksFiles]
+VfsSandbox.sys=1
+
+[Strings]
+Provider="VFS Sandbox"
+Description="VFS Sandbox filesystem virtualization filter"

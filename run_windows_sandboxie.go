@@ -25,8 +25,8 @@ type windowsSandboxieRequest struct {
 func runWindowsSandboxieFallback(invocation portableInvocation, workingDirectory, runDir, layerDir string, manifest portableManifest, removeLayer *bool) (exitCode int) {
 	startPath, iniPath, err := findWindowsSandboxie()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vfs-sandbox: Sandboxie-Plus is unavailable (%v); Minifilter is reserved and is not implemented\n", err)
-		return 125
+		fmt.Fprintf(os.Stderr, "vfs-sandbox: Sandboxie-Plus is unavailable (%v); trying Minifilter\n", err)
+		return runWindowsMinifilter(invocation, workingDirectory, layerDir, manifest, removeLayer)
 	}
 	captureDirectory := filepath.Join(runDir, "sandboxie-output")
 	if _, err := os.Lstat(captureDirectory); err == nil {
@@ -58,6 +58,7 @@ func runWindowsSandboxieFallback(invocation portableInvocation, workingDirectory
 	}
 	boxConfigurationAttempted := false
 	sandboxRunAttempted := false
+	tryMinifilter := false
 	cleanup := func() error {
 		if sandboxRunAttempted {
 			if err := runWindowsSandboxieCommand(startPath, "/box:"+boxName, "/terminate"); err != nil {
@@ -85,6 +86,10 @@ func runWindowsSandboxieFallback(invocation portableInvocation, workingDirectory
 			*removeLayer = false
 			fmt.Fprintf(os.Stderr, "vfs-sandbox: Sandboxie-Plus cleanup failed: %v; box data may remain under %s\n", cleanupErr, boxRoot)
 			exitCode = 125
+			return
+		}
+		if tryMinifilter {
+			exitCode = runWindowsMinifilter(invocation, workingDirectory, layerDir, manifest, removeLayer)
 		}
 	}()
 
@@ -123,12 +128,14 @@ func runWindowsSandboxieFallback(invocation portableInvocation, workingDirectory
 	for _, setting := range settings {
 		boxConfigurationAttempted = true
 		if err := runWindowsSandboxieConfig(iniPath, "set", boxName, setting[0], setting[1]); err != nil {
-			fmt.Fprintf(os.Stderr, "vfs-sandbox: configure Sandboxie-Plus box: %v\n", err)
+			fmt.Fprintf(os.Stderr, "vfs-sandbox: configure Sandboxie-Plus box: %v; trying Minifilter\n", err)
+			tryMinifilter = true
 			return 125
 		}
 	}
 	if err := runWindowsSandboxieCommand(startPath, "/reload"); err != nil {
-		fmt.Fprintf(os.Stderr, "vfs-sandbox: activate Sandboxie-Plus box: %v\n", err)
+		fmt.Fprintf(os.Stderr, "vfs-sandbox: activate Sandboxie-Plus box: %v; trying Minifilter\n", err)
+		tryMinifilter = true
 		return 125
 	}
 	fmt.Fprintln(os.Stderr, "vfs-sandbox: starting a temporary Sandboxie-Plus box; installed network and direct-write rules apply")

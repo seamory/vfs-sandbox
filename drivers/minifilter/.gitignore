@@ -1,0 +1,6 @@
+out/
+x64/
+Win32/
+Debug/
+Release/
+*.vcxproj.user
